@@ -1,6 +1,20 @@
+#!/usr/bin/env python
+#coding:utf-8
 import numpy as np
 from scipy.optimize import fsolve, root
 from math import sin, cos
+import rospy
+from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Point
+
+# pose = PoseStamped()
+def callback(data):
+    x = 1
+	# pose.header.stamp = rospy.Time.now()
+	# pose.pose = data.pose
+    # pose.pose.position.x = data.pose.position.x 
+    # pose.pose.position.y = data.pose.position.y 
+    # pose.pose.position.z = data.pose.position.z
 
 
 def coordinates_calculate(alpha, beta):
@@ -57,7 +71,10 @@ def f(x):
     # ]
     R2 = coordinates_calculate(alpha, beta)
     start = motor_cross(alpha, beta, 0.064)
-    return plane_cross(R2, start, 0.507)[1:] - np.array([0, -0.022])
+	
+	# by = pose.pose.position.y
+	# bz = pose.pose.position.z
+    return plane_cross(R2, start, 0.507)[1:] - np.array([by, bz])
 
 
 def main():
@@ -81,4 +98,20 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+	rospy.init_node('talker', anonymous=True)
+    pub = rospy.Publisher('/tracker/test', PoseStamped, queue_size=10)
+    
+	rospy.Subscriber("/tracker/aruco", PoseStamped, callback)
+	rate = rospy.Rate(10) # 10hz
+    while not rospy.is_shutdown():
+        # by, bz = main()
+		# motor_pose = PoseStamped()
+		# motor_pose.header = std_msgs.msg.Header()
+		# motor_pose.pose = Pose()
+		# motor_pose.pose.header.stamp = rospy.Time.now()
+		# motor_pose.pose.pose.position.x = 0
+		# motor_pose.pose.pose.position.y = by
+		# motor_pose.pose.pose.position.z = bz
+		# pub.publish(motor_pose)
+        rate.sleep()
+

@@ -46,7 +46,7 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 ## * In this file (CMakeLists.txt):
 ##   * add "message_generation" and every package in MSG_DEP_SET to
 find_package(catkin REQUIRED COMPONENTS
-  roscpp geometry_msgs
+  roscpp geometry_msgs rospy tf
 )
 ##   * add "message_runtime" and every package in MSG_DEP_SET to
 ##     catkin_package(CATKIN_DEPENDS ...)

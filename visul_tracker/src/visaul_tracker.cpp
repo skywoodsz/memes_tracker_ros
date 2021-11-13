@@ -3,7 +3,8 @@
 //
 #include <ros/ros.h>
 #include "geometry_msgs/PoseStamped.h"
-
+#include <tf/transform_broadcaster.h>
+#include <tf/transform_listener.h>                                                               
 #include <iostream>
 #include <vector>
 #include <opencv2/opencv.hpp>
@@ -42,6 +43,8 @@ void angle_callback(const geometry_msgs::PoseStamped::ConstPtr& msg)
 	get_msg = true;
     geometry_msgs::PoseStamped pose = *msg;
     target_pose = pose.pose;
+
+    // cout<<"get!!"<<endl;
 }
 
 int main(int argc, char *argv[])
@@ -51,7 +54,9 @@ int main(int argc, char *argv[])
 	ros::Subscriber sub = node_handle.subscribe("/tracker/angle", 10, angle_callback);
   	ros::Publisher pub = node_handle.advertise<geometry_msgs::PoseStamped>("/tracker/aruco",10);
 	ros::Publisher origin_pub = node_handle.advertise<geometry_msgs::PoseStamped>("/tracker/origin",10);
-	geometry_msgs::PoseStamped aruco_pose, origin_pose;
+	geometry_msgs::PoseStamped aruco_pose, origin_pose, send_pose;
+    tf::TransformBroadcaster broadcaster;
+    tf::TransformListener listener;
 
 	#ifdef SER
 		Serial_PC2MCU serial;
@@ -72,11 +77,12 @@ int main(int argc, char *argv[])
     Ptr<cv::aruco::Dictionary>dictionary=aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
 
     Mat frame;
-    VideoCapture capture(0);
+    VideoCapture capture(1);
     double origin[3], traker[3];
     bool origin_init = false;
+    ros::Rate loop_rate(10);
 
-    while(true)
+    while(ros::ok())
     {
         capture >> frame;
         if(frame.empty())
@@ -101,7 +107,7 @@ int main(int argc, char *argv[])
             std::vector<cv::Vec3d> rvecs;
             std::vector<cv::Vec3d> tvecs;
 
-            cv::aruco::estimatePoseSingleMarkers(corners, 0.01, K, D, rvecs, tvecs); // draw axis for each marker
+            cv::aruco::estimatePoseSingleMarkers(corners, 0.02, K, D, rvecs, tvecs); // draw axis for each marker
 
             for(int i = 0; i<ids.size(); i++)
             {
@@ -114,12 +120,11 @@ int main(int argc, char *argv[])
                         origin_init = true;
 
                         origin[0] = tvecs[i][0];
-                        origin[1] = tvecs[i][1];
+                        origin[1] = tvecs[i][1]; // - tvecs[i][1];
                         origin[2] = tvecs[i][2];
 
 						origin_pose.header.stamp = ros::Time::now();
                         origin_pose.pose.position.x = origin[0];
-
 						origin_pose.pose.position.y = origin[1];
 						origin_pose.pose.position.z = origin[2];
 						origin_pub.publish(origin_pose);
@@ -132,12 +137,42 @@ int main(int argc, char *argv[])
                         traker[0] = tvecs[i][0];
                         traker[1] = tvecs[i][1];
                         traker[2] = tvecs[i][2];
-						
-						aruco_pose.header.stamp = ros::Time::now();
-						aruco_pose.pose.position.x = traker[0];
+
+						tf::Quaternion q;/*定义四元数*/
+                        q.setRPY(rvecs[i][0],rvecs[i][1],rvecs[i][2]);
+
+                        broadcaster.sendTransform( //tf创建的对象发布消息
+                        tf::StampedTransform(		  
+                            tf::Transform(q, tf::Vector3(traker[1], traker[0], traker[2])),
+                            ros::Time::now(),"aruco_link", "camera_link")); 
+                        
+                        tf::StampedTransform transform;
+                        try{
+                            listener.lookupTransform("/camera_link", "/aruco_link",
+                                                ros::Time(0), transform);
+                        }
+                            catch (tf::TransformException &ex) {
+                            ROS_ERROR("%s",ex.what());
+                            ros::Duration(1.0).sleep();
+                            continue;
+                        }
+
+						// aruco_pose.header.stamp = ros::Time::now();
+						// aruco_pose.pose.position.x = traker[0]; // G
+						// aruco_pose.pose.position.y = - traker[1]; // R
+						// aruco_pose.pose.position.z = traker[2];
+
+                        aruco_pose.header.stamp = ros::Time::now();
+                        aruco_pose.pose.position.x = traker[0];
 						aruco_pose.pose.position.y = traker[1];
 						aruco_pose.pose.position.z = traker[2];
-						pub.publish(aruco_pose);
+
+						send_pose.header.stamp = ros::Time::now();
+                        send_pose.pose.position.x = aruco_pose.pose.position.x - origin_pose.pose.position.x;
+						send_pose.pose.position.y = aruco_pose.pose.position.y - origin_pose.pose.position.y;
+						send_pose.pose.position.z = aruco_pose.pose.position.z - origin_pose.pose.position.z;
+                        
+                        pub.publish(send_pose);
 
 						origin_pose.header.stamp = ros::Time::now();
 						origin_pub.publish(origin_pose);
@@ -149,13 +184,15 @@ int main(int argc, char *argv[])
                 cv::aruco::drawAxis(UndistortImage, K, D, rvecs[i], tvecs[i], 0.1);
             }
         }
+
+        int bx, by, y0;
 		#if (defined SER)
+        // cout<<"get_msg: "<<get_msg<<endl;
 				if(get_msg)
 				{
 					// serial.send_data (bx, by, lx, ly);
-                    int bx, by;
-                    bx = target_pose.position.y;
-                    by = target_pose.position.z;
+                    bx = target_pose.position.y * 130;
+                    by = target_pose.position.z * 0.006 + y0;
 					serial.send_data (bx, by);
 					//serial.send_data (0, 0, 0, 0);
 					std::cout<<"send the data!"<<std::endl;
@@ -163,12 +200,47 @@ int main(int argc, char *argv[])
 		#endif
 
 
-        //std::cout<<"the origin is: "<<origin[0]<<", "<<origin[1]<<", "<<origin[2]<<std::endl;
-        std::cout<<"the tracking is: "<<traker[0]<<", "<<traker[1]<<", "<<traker[2]<<std::endl;
+        // std::cout<<"the origin is: "<<origin[0]<<", "<<origin[1]<<", "<<origin[2]<<std::endl;
+        // std::cout<<"the tracking is: "<< traker[0]<<", "<< traker[1]<<", "<< traker[2]<<std::endl;
+        std::cout<<"the tracking is: "<<aruco_pose.pose.position.x - origin_pose.pose.position.x
+        <<", "<<aruco_pose.pose.position.y - origin_pose.pose.position.y
+        <<", "<<aruco_pose.pose.position.z - origin_pose.pose.position.z
+        <<std::endl;
+
+        // std::cout<<"the tracking is: "<<aruco_pose.pose.position.x
+        // <<", "<<aruco_pose.pose.position.y 
+        // <<", "<<aruco_pose.pose.position.z 
+        // <<std::endl;
+        float temp_x, temp_y;
+        temp_x = send_pose.pose.position.x; 
+        temp_y = send_pose.pose.position.y;
+        putText(UndistortImage, "space: ", Point(10, 200),
+        cv::FONT_HERSHEY_COMPLEX,1, cv::Scalar(0, 0, 255), 1, 8, 0);
+        putText(UndistortImage, to_string(temp_x)
+        + ", " + to_string(temp_y)
+        , Point(10, 230),
+        cv::FONT_HERSHEY_COMPLEX,1, cv::Scalar(0, 0, 255), 1, 8, 0);
+
+        putText(UndistortImage, "angle: ", Point(10, 260),
+        cv::FONT_HERSHEY_COMPLEX,1, cv::Scalar(0, 0, 255), 1, 8, 0);
+        putText(UndistortImage, to_string(target_pose.position.y)
+        + ", " + to_string(target_pose.position.z)
+        , Point(10, 290),
+        cv::FONT_HERSHEY_COMPLEX,1, cv::Scalar(0, 0, 255), 1, 8, 0);
+
+        putText(UndistortImage, "send: ", Point(10, 320),
+        cv::FONT_HERSHEY_COMPLEX,1, cv::Scalar(0, 0, 255), 1, 8, 0);
+        putText(UndistortImage, to_string(bx)
+        + ", " + to_string(by)
+        , Point(10, 350),
+        cv::FONT_HERSHEY_COMPLEX,1, cv::Scalar(0, 0, 255), 1, 8, 0);
+
         cv::imshow("out", UndistortImage);
 
         if(waitKey(20) == 'q')
             break;
+        ros::spinOnce();
+        // loop_rate.sleep();
     }
 
     capture.release();
